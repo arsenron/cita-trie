@@ -43,29 +43,44 @@ impl Debug for Node {
 impl Node {
     /// Creates a node from leaf and leaks it
     pub(crate) fn from_leaf(key: NibbleVec, value: Vec<u8>) -> Self {
-        let ptr = Box::leak(Box::new(LeafNode { key, value }));
-        Node::Leaf(NonNull::new(ptr).unwrap())
+        unsafe {
+            Node::Leaf(NonNull::new_unchecked(Box::leak(Box::new(LeafNode {
+                key,
+                value,
+            }))))
+        }
     }
 
     /// Creates a node from branch and leaks it
     pub(crate) fn from_branch(children: [Node; 16], value: Option<Vec<u8>>) -> Self {
-        let ptr = Box::leak(Box::new(BranchNode { children, value }));
-        Node::Branch(NonNull::new(ptr).unwrap())
+        unsafe {
+            Node::Branch(NonNull::new_unchecked(Box::leak(Box::new(BranchNode {
+                children,
+                value,
+            }))))
+        }
     }
 
     /// Creates a node from extension and leaks it
     pub(crate) fn from_extension(prefix: NibbleVec, node: Node) -> Self {
-        let ptr = Box::leak(Box::new(ExtensionNode { prefix, node }));
-        Node::Extension(NonNull::new(ptr).unwrap())
+        unsafe {
+            Node::Extension(NonNull::new_unchecked(Box::leak(Box::new(ExtensionNode {
+                prefix,
+                node,
+            }))))
+        }
     }
 
     /// Creates a node from hash and leaks it
     pub(crate) fn from_hash(hash: [u8; 32]) -> Self {
-        let ptr = Box::leak(Box::new(HashNode { hash }));
-        Node::Hash(NonNull::new(ptr).unwrap())
+        unsafe {
+            Node::Hash(NonNull::new_unchecked(Box::leak(Box::new(HashNode {
+                hash,
+            }))))
+        }
     }
 
-    pub(crate) unsafe fn deallocate(node: Self) {
+    pub(crate) unsafe fn dealloc(node: Self) {
         match node {
             Node::Empty => {}
             Node::Leaf(leaf) => {
@@ -73,12 +88,12 @@ impl Node {
             }
             Node::Extension(ext) => {
                 let ext_owned = to_owned(ext);
-                Self::deallocate(ext_owned.node);
+                Self::dealloc(ext_owned.node);
             }
             Node::Branch(branch) => {
                 let branch_owned = to_owned(branch);
                 for node in branch_owned.children {
-                    Self::deallocate(node);
+                    Self::dealloc(node);
                 }
             }
             Node::Hash(hash_node) => unsafe {

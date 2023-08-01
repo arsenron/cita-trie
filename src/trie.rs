@@ -71,7 +71,7 @@ pub struct PatriciaTrie<D> {
 
 impl<D> Drop for PatriciaTrie<D> {
     fn drop(&mut self) {
-        unsafe { Node::deallocate(self.root.clone()) }
+        unsafe { Node::dealloc(self.root.clone()) }
     }
 }
 
@@ -216,7 +216,7 @@ where
                 }
             } else {
                 for n in self.recovered_nodes.borrow_mut().drain(..) {
-                    unsafe { Node::deallocate(n) }
+                    unsafe { Node::dealloc(n) }
                 }
                 return None;
             }
@@ -382,7 +382,7 @@ where
         if !path.is_empty() {
             // exclude root
             for n in path.drain(..path.len() - 1) {
-                unsafe { Node::deallocate(n) };
+                unsafe { Node::dealloc(n) };
             }
         }
         proof
@@ -469,7 +469,7 @@ where
         match n {
             Node::Empty => Ok(Node::from_leaf(partial.to_owned(), value)),
             Node::Leaf(mut leaf) => unsafe {
-                let mut leaf_mut = leaf.as_mut();
+                let leaf_mut = leaf.as_mut();
 
                 let old_partial = &leaf_mut.key;
                 let match_index = partial.common_prefix(old_partial);
@@ -505,7 +505,7 @@ where
                 }
             },
             Node::Branch(mut branch) => {
-                let mut branch_mut = unsafe { branch.as_mut() };
+                let branch_mut = unsafe { branch.as_mut() };
 
                 if partial.at(0) == 16 {
                     branch_mut.value = Some(value);
@@ -518,7 +518,7 @@ where
                 Ok(Node::Branch(branch))
             }
             Node::Extension(mut ext) => unsafe {
-                let mut ext_mut = ext.as_mut();
+                let ext_mut = ext.as_mut();
 
                 let match_index = partial.common_prefix(&ext_mut.prefix);
 
@@ -584,7 +584,7 @@ where
                 Ok((Node::Leaf(leaf), false))
             },
             Node::Branch(mut branch) => {
-                let mut branch_mut = unsafe { branch.as_mut() };
+                let branch_mut = unsafe { branch.as_mut() };
 
                 let index = partial.at(0);
                 if index == 16 {
@@ -602,7 +602,7 @@ where
                 Ok((Node::Branch(branch), deleted))
             }
             Node::Extension(mut ext) => {
-                let mut ext_ref = unsafe { ext.as_mut() };
+                let ext_ref = unsafe { ext.as_mut() };
 
                 let prefix = &ext_ref.prefix;
                 let match_len = partial.common_prefix(prefix);
@@ -777,7 +777,7 @@ where
 
         self.root_hash = root_hash.clone();
         self.recovered_nodes_hashes.clear();
-        unsafe { Node::deallocate(self.root.clone()) };
+        unsafe { Node::dealloc(self.root.clone()) };
         self.root = self.recover_from_db(&self.root_hash)?;
         Ok(root_hash)
     }
@@ -950,8 +950,16 @@ where
             Node::Hash(hash_node) => {
                 let hash = unsafe { hash_node.as_ref() }.hash;
                 let next_node = self.recover_from_db(&hash)?;
-                let data = self.cache_node(next_node.clone(), cache)?;
-                unsafe { Node::deallocate(next_node) };
+                let data = match self.cache_node(next_node.clone(), cache) {
+                    Ok(data) => {
+                        unsafe { Node::dealloc(next_node) };
+                        data
+                    }
+                    Err(e) => {
+                        unsafe { Node::dealloc(next_node) };
+                        return Err(e);
+                    }
+                };
                 cache.insert(hash.to_vec(), data);
                 Ok(hash.to_vec())
             }
@@ -969,6 +977,13 @@ mod tests {
 
     use super::{PatriciaTrie, Trie};
     use crate::db::{MemoryDB, DB};
+
+    #[test]
+    fn test_is_sync() {
+        fn is_sync<T: Send + Sync>() {}
+
+        is_sync::<PatriciaTrie<MemoryDB>>()
+    }
 
     #[test]
     fn test_trie_insert() {
@@ -1301,28 +1316,4 @@ mod tests {
 
         assert!(PatriciaTrie::extract_backup(memdb, memdb2, &hash).is_ok());
     }
-
-    // #[test]
-    // fn my() {
-    //     let memdb = MemoryDB::new(true);
-    //     let root = {
-    //         let mut trie = PatriciaTrie::new(memdb.clone());
-    //         trie.insert(b"test".to_vec(), b"test".to_vec()).unwrap();
-    //         trie.insert(b"test1".to_vec(), b"test".to_vec()).unwrap();
-    //         trie.insert(b"test2".to_vec(), b"test".to_vec()).unwrap();
-    //         trie.insert(b"test23".to_vec(), b"test".to_vec()).unwrap();
-    //         trie.insert(b"test33".to_vec(), b"test".to_vec()).unwrap();
-    //         trie.insert(b"test44".to_vec(), b"test".to_vec()).unwrap();
-    //         trie.commit().unwrap()
-    //     };
-    //
-    //     let mut trie = PatriciaTrie::from(memdb, &root).unwrap();
-    //     let value = trie.get(b"test").unwrap();
-    //     assert!(value.is_some());
-    //     // eprintln!("trie.root = {:#?}", trie.root);
-    //     trie.insert(b"test".to_vec(), b"qewr".to_vec()).unwrap();
-    //     trie.insert(b"test2".to_vec(), b"qewr".to_vec()).unwrap();
-    //     trie.insert(b"tes".to_vec(), b"qewr".to_vec()).unwrap();
-    //     // eprintln!("trie.root = {:#?}", trie.root);
-    // }
 }
